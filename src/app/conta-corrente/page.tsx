@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { ArrowDownLeft, ArrowUpRight, Landmark, TrendingDown, TrendingUp, Calendar, ChevronDown } from "lucide-react";
+import {
+  ArrowDownLeft, ArrowUpRight, Landmark, TrendingDown, TrendingUp,
+  Calendar, ChevronDown, PlusCircle, X, ArrowUp, ArrowDown,
+} from "lucide-react";
 import Sidebar from "@/components/Sidebar";
-import { getLancamentos } from "@/lib/actions";
+import { getLancamentos, addLancamento } from "@/lib/actions";
 import { Lancamento } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -22,6 +25,10 @@ interface Linha {
   saldo: number;
 }
 
+function hoje() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export default function ContaCorrentePage() {
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,11 +37,18 @@ export default function ContaCorrentePage() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   });
 
+  // Modal de ajuste
+  const [modalAberto, setModalAberto] = useState(false);
+  const [ajusteTipo, setAjusteTipo] = useState<"entrada" | "saida">("entrada");
+  const [ajusteValor, setAjusteValor] = useState("");
+  const [ajusteDescricao, setAjusteDescricao] = useState("");
+  const [ajusteData, setAjusteData] = useState(hoje);
+  const [salvando, setSalvando] = useState(false);
+
   useEffect(() => {
     getLancamentos().then((data) => { setLancamentos(data); setLoading(false); });
   }, []);
 
-  // Apenas lançamentos pagos, ordenados por dataPagamento
   const pagos = useMemo(() =>
     [...lancamentos]
       .filter((l) => l.status === "pago" && l.dataPagamento)
@@ -42,19 +56,16 @@ export default function ContaCorrentePage() {
     [lancamentos]
   );
 
-  // Saldo atual = soma de tudo que foi pago
   const saldoAtual = useMemo(() =>
     pagos.reduce((s, l) => s + (l.tipo === "receber" ? l.valor : -l.valor), 0),
     [pagos]
   );
 
-  // Meses com movimentação
   const mesesDisponiveis = useMemo(() => {
     const set = new Set(pagos.map((l) => l.dataPagamento!.slice(0, 7)));
     return Array.from(set).sort().reverse();
   }, [pagos]);
 
-  // Extrato com saldo acumulado, filtrado por mês, mais recente primeiro
   const extrato = useMemo((): Linha[] => {
     let acumulado = 0;
     const todas: Linha[] = pagos.map((l) => {
@@ -83,6 +94,36 @@ export default function ContaCorrentePage() {
     ? "Todos os períodos"
     : (() => { const [a, m] = filtroMes.split("-").map(Number); return `${MESES_PT[m - 1]} ${a}`; })();
 
+  function abrirModal() {
+    setAjusteTipo("entrada");
+    setAjusteValor("");
+    setAjusteDescricao("");
+    setAjusteData(hoje());
+    setModalAberto(true);
+  }
+
+  async function salvarAjuste() {
+    const valor = parseFloat(ajusteValor.replace(",", "."));
+    if (!valor || valor <= 0 || !ajusteDescricao.trim() || !ajusteData) return;
+    setSalvando(true);
+    try {
+      await addLancamento({
+        tipo: ajusteTipo === "entrada" ? "receber" : "pagar",
+        descricao: ajusteDescricao.trim(),
+        valor,
+        dataVencimento: ajusteData,
+        dataPagamento: ajusteData,
+        status: "pago",
+        categoria: "outros",
+      });
+      const data = await getLancamentos();
+      setLancamentos(data);
+      setModalAberto(false);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   return (
     <div className="flex min-h-screen bg-slate-950">
       <Sidebar />
@@ -90,14 +131,24 @@ export default function ContaCorrentePage() {
         <div className="max-w-3xl mx-auto space-y-5">
 
           {/* Header */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
-              <Landmark size={20} className="text-blue-400" />
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
+                <Landmark size={20} className="text-blue-400" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-white">Conta Corrente</h1>
+                <p className="text-sm text-slate-400">Extrato de movimentações</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold text-white">Conta Corrente</h1>
-              <p className="text-sm text-slate-400">Extrato de movimentações</p>
-            </div>
+            <button
+              onClick={abrirModal}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2.5 rounded-xl transition-colors"
+            >
+              <PlusCircle size={16} />
+              <span className="hidden sm:inline">Ajuste Manual</span>
+              <span className="sm:hidden">Ajuste</span>
+            </button>
           </div>
 
           {loading ? (
@@ -241,6 +292,107 @@ export default function ContaCorrentePage() {
           )}
         </div>
       </main>
+
+      {/* Modal de Ajuste Manual */}
+      {modalAberto && (
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setModalAberto(false)} />
+          <div className="relative w-full md:max-w-md bg-slate-900 border border-slate-800 rounded-t-2xl md:rounded-2xl p-6 space-y-5 shadow-2xl">
+            {/* Drag handle mobile */}
+            <div className="md:hidden w-10 h-1 bg-slate-700 rounded-full mx-auto -mt-1 mb-1" />
+
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Ajuste Manual</h2>
+              <button
+                onClick={() => setModalAberto(false)}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Tipo: Entrada / Saída */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setAjusteTipo("entrada")}
+                className={cn(
+                  "flex items-center justify-center gap-2 py-3 rounded-xl border text-sm font-semibold transition-all",
+                  ajusteTipo === "entrada"
+                    ? "bg-emerald-500/15 border-emerald-500/50 text-emerald-400"
+                    : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600"
+                )}
+              >
+                <ArrowUp size={16} /> Entrada
+              </button>
+              <button
+                onClick={() => setAjusteTipo("saida")}
+                className={cn(
+                  "flex items-center justify-center gap-2 py-3 rounded-xl border text-sm font-semibold transition-all",
+                  ajusteTipo === "saida"
+                    ? "bg-red-500/15 border-red-500/50 text-red-400"
+                    : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600"
+                )}
+              >
+                <ArrowDown size={16} /> Saída
+              </button>
+            </div>
+
+            {/* Valor */}
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5">Valor</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">R$</span>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  placeholder="0,00"
+                  value={ajusteValor}
+                  onChange={(e) => setAjusteValor(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-10 pr-4 py-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* Descrição */}
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5">Descrição</label>
+              <input
+                type="text"
+                placeholder="Ex: Depósito, Saque, Ajuste..."
+                value={ajusteDescricao}
+                onChange={(e) => setAjusteDescricao(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
+              />
+            </div>
+
+            {/* Data */}
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5">Data</label>
+              <input
+                type="date"
+                value={ajusteData}
+                onChange={(e) => setAjusteData(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
+              />
+            </div>
+
+            {/* Botão salvar */}
+            <button
+              onClick={salvarAjuste}
+              disabled={salvando || !ajusteValor || !ajusteDescricao.trim() || !ajusteData}
+              className={cn(
+                "w-full py-3 rounded-xl text-sm font-semibold transition-all",
+                ajusteTipo === "entrada"
+                  ? "bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-40"
+                  : "bg-red-600 hover:bg-red-500 text-white disabled:opacity-40"
+              )}
+            >
+              {salvando ? "Salvando..." : ajusteTipo === "entrada" ? "Registrar Entrada" : "Registrar Saída"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
